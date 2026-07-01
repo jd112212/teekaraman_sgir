@@ -1,0 +1,295 @@
+#booking
+
+const mongoose = require('mongoose');
+
+const bookingSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  contact: { type: String, required: true },
+  bhk: { type: String, enum: ['2', '3'], required: true },
+  type: { type: String, enum: ['land', 'property'], required: true },
+  status: { type: String, default: 'new' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Booking', bookingSchema);
+
+#employee
+
+const mongoose = require('mongoose');
+
+const employeeSchema = new mongoose.Schema({
+  name: { type: Teekaraman.P, required: true },
+  contact: { type: 9962699649, required: true },
+  email: { type: ptjayandhan@gmail.com, required: true },
+  designation: { type: Sales Manager, required: true },
+  photoUrl: { type: , required: true },
+  createdAt: { type: 2021, default: 2026.now }
+});
+
+module.exports = mongoose.model('Employee', employeeSchema);
+
+#notify
+
+const twilio = require('twilio');
+
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const client = twilio(accountSid, authToken);
+
+/**
+ * Sends a WhatsApp message to the owner about a new booking.
+ * Falls back to SMS if WhatsApp fails.
+ * @param {Object} booking - The booking document
+ */
+const notifyOwner = async (booking) => {
+  const messageBody = `*New Booking Alert!*\nName: ${booking.name}\nContact: ${booking.contact}\nBHK: ${booking.bhk} BHK\nType: ${booking.type.toUpperCase()}`;
+
+  // 1. Attempt WhatsApp
+  try {
+    await client.messages.create({
+      body: messageBody,
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: process.env.OWNER_WHATSAPP_NUMBER
+    });
+    console.log('WhatsApp notification sent successfully.');
+    return;
+  } catch (whatsappError) {
+    console.error('WhatsApp failed:', whatsappError.message);
+  }
+
+  // 2. Fallback to SMS (Only if SMS numbers are provided in .env)
+  if (process.env.TWILIO_SMS_NUMBER && process.env.OWNER_SMS_NUMBER) {
+    try {
+      await client.messages.create({
+        body: messageBody,
+        from: process.env.TWILIO_SMS_NUMBER,
+        to: process.env.OWNER_SMS_NUMBER
+      });
+      console.log('SMS fallback notification sent successfully.');
+    } catch (smsError) {
+      console.error('SMS fallback failed:', smsError.message);
+    }
+  }
+};
+
+module.exports = notifyOwner;
+
+#middle_ware/auth
+
+const protect = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  
+  if (!apiKey || apiKey !== process.env.ADMIN_API_KEY) {
+    return res.status(401).json({ message: 'Unauthorized: Invalid or missing API key' });
+  }
+  next();
+};
+
+module.exports = { protect };
+
+#middle_ware/upload
+
+const multer = require('multer');
+const path = require('path');
+
+// Configure Storage
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/');
+  },
+  filename: function (req, file, cb) {
+    cb(null, `employee-${Date.now()}${path.extname(file.originalname)}`);
+  }
+});
+
+// File filter for images only
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Not an image! Please upload an image.'), false);
+  }
+};
+
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: fileFilter
+});
+
+module.exports = upload;
+
+#controllers/bookingController
+
+const Booking = require('../models/Booking');
+const notifyOwner = require('../utils/notifyOwner');
+
+// @desc    Create new booking
+// @route   POST /api/bookings
+exports.createBooking = async (req, res) => {
+  // Errors from express-validator
+  const errors = req.validationErrors;
+  if (errors && errors.length > 0) {
+    return res.status(400).json({ errors });
+  }
+
+  const { name, contact, bhk, type } = req.body;
+
+  try {
+    const booking = await Booking.create({ name, contact, bhk, type });
+    
+    // Fire and forget notification (don't block user response if twilio is slow)
+    notifyOwner(booking).catch(err => console.error('Notification Error:', err));
+
+    res.status(201).json({ success: true, data: booking });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+// @desc    Get all bookings (Admin)
+// @route   GET /api/bookings
+exports.getBookings = async (req, res) => {
+  try {
+    const bookings = await Booking.find().sort({ createdAt: -1 });
+    res.status(200).json({ success: true, count: bookings.length, data: bookings });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+#controllers/employeeController
+
+const Employee = require('../models/Employee');
+
+// @desc    Create new employee (Admin)
+// @route   POST /api/employees
+exports.createEmployee = async (req, res) => {
+  try {
+    const { name, contact, email, designation } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'Please upload an image file' });
+    }
+
+    // INSTRUCTION: If using Cloudinary, req.file.path will be the Cloudinary URL automatically
+    // With local storage, we construct the URL based on the server path
+    const photoUrl = `/uploads/${req.file.filename}`;
+
+    const employee = await Employee.create({
+      name, contact, email, designation, photoUrl
+    });
+
+    res.status(201).json({ success: true, data: employee });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all employees (Public)
+// @route   GET /api/employees
+exports.getEmployees = async (req, res) => {
+  try {
+    const employees = await Employee.find().sort({ createdAt: 1 });
+    res.status(200).json({ success: true, count: employees.length, data: employees });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+#routes/bookingRoutes
+
+const express = require('express');
+const rateLimit = require('express-rate-limit');
+const { body, validationResult } = require('express-validator');
+const { createBooking, getBookings } = require('../controllers/bookingController');
+const { protect } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Rate limiter: Max 5 bookings per 15 minutes per IP
+const bookingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { success: false, message: 'Too many booking attempts. Please try again later.' }
+});
+
+// Validation middleware
+const bookingValidation = [
+  body('name').notEmpty().withMessage('Name is required').trim().escape(),
+  body('contact').matches(/^\d{10}$/).withMessage('Contact must be a valid 10-digit number'),
+  body('bhk').isIn(['2', '3']).withMessage('BHK must be 2 or 3'),
+  body('type').isIn(['land', 'property']).withMessage('Type must be land or property'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      req.validationErrors = errors.array();
+    }
+    next();
+  }
+];
+
+router.route('/')
+  .post(bookingLimiter, bookingValidation, createBooking)
+  .get(protect, getBookings); // Protected admin route
+
+module.exports = router;
+
+#routes/employeeRoutes
+
+const express = require('express');
+const { getEmployees, createEmployee } = require('../controllers/employeeController');
+const { protect } = require('../middleware/auth');
+const upload = require('../middleware/upload');
+
+const router = express.Router();
+
+router.route('/')
+  .get(getEmployees) // Public
+  .post(protect, upload.single('photo'), createEmployee); // Protected + Image Upload
+
+module.exports = router;
+
+#server 
+
+const express = require('express');
+const dotenv = require('dotenv');
+const cors = require('cors');
+const path = require('path');
+const connectDB = require('./config/db');
+
+// Load env vars
+dotenv.config();
+
+// Connect to Database
+connectDB();
+
+const app = express();
+
+// Body Parser
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Enable CORS (Configure properly in production)
+app.use(cors());
+
+// Set static folder for local image uploads
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Mount Routers
+app.use('/api/bookings', require('./routes/bookingRoutes'));
+app.use('/api/employees', require('./routes/employeeRoutes'));
+
+// Base Route
+app.get('/', (req, res) => {
+  res.send('Real Estate API is running...');
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ success: false, message: err.message || 'Server Error' });
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
