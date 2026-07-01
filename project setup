@@ -1,0 +1,4 @@
+mkdir real-estate-backend
+cd real-estate-backend
+npm init -y
+npm install express mongoose dotenv cors express-rate-limit express-validator twilio multer cloudinary
